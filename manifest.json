@@ -1,0 +1,12 @@
+{
+    "display_name": "STpedia",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Ayrissa",
+    "version": "0.1.0",
+    "homePage": "https://github.com/Ayrissa/STpedia",
+    "auto_update": true
+}
