@@ -1,4 +1,4 @@
-import { S, t, esc, lookupWiki, lookupAI, aiConfigured } from './core.js';
+import { S, t, esc, lookupWiki, lookupAI, aiConfigured, toggleFav, isFav, bus } from './core.js';
 
 let btn, card, current = null, history = [], token = 0, pending = null, pressing = false, selTimer = 0;
 const ic = n => `<i class="fa-solid fa-${n}"></i>`;
@@ -24,7 +24,14 @@ function readSelection() {
     if (term.length < 2 || term.length > 120 || !/\p{L}/u.test(term) || term.split(' ').length > S().ui.maxWords) return null;
     const full = block.textContent || '', i = full.indexOf(term.split(' ')[0]);
     const around = i >= 0 ? full.slice(Math.max(0, i - 220), i + term.length + 220).replace(/\s+/g, ' ').trim() : '';
-    return { term, range, around };
+    let midCap = false;
+    try {
+        const pre = document.createRange();
+        pre.selectNodeContents(block); pre.setEnd(range.startContainer, range.startOffset);
+        const before = pre.toString().trimEnd();
+        midCap = /^\p{Lu}/u.test(term) && before.length > 0 && !/[.!?…:"«“„—–-]$/.test(before);
+    } catch (e) { /* ignore */ }
+    return { term, range, around, midCap };
 }
 
 function placeButton(range) {
@@ -54,7 +61,7 @@ function onSelectionChange() {
         const r = readSelection();
         if (!r) { if (!pressing) hideBtn(); return; }
         const rc = r.range.getBoundingClientRect();
-        pending = { term: r.term, around: r.around, anchor: { left: rc.left, right: rc.right, top: rc.top, bottom: rc.bottom } };
+        pending = { term: r.term, around: r.around, midCap: r.midCap, anchor: { left: rc.left, right: rc.right, top: rc.top, bottom: rc.bottom } };
         if (placeButton(r.range)) btn.classList.add('on');
     }, isCoarse() ? 350 : 150);
 }
@@ -83,15 +90,32 @@ function boldTitle(text, title) {
     return esc(text.slice(0, i)) + '<b>' + esc(text.slice(i, i + base.length)) + '</b>' + esc(text.slice(i + base.length));
 }
 
+/** AI models like to answer with markdown: turn it into real bold / italic (input is already escaped). */
+function md(html) {
+    return html
+        .replace(/^\s*[*•-]\s+/gm, '• ')
+        .replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>')
+        .replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>')
+        .replace(/__([^_]+?)__/g, '<b>$1</b>')
+        .replace(/(^|[^*\w])\*([^\s*][^*]*?)\*(?!\*)/g, '$1<i>$2</i>')
+        .replace(/(^|[^_\w])_([^\s_][^_]*?)_(?!\w)/g, '$1<i>$2</i>')
+        .replace(/\*{1,3}/g, '');
+}
+const plainMd = s => String(s || '').replace(/[*_#]+/g, '').trim();
+
 function entryHtml(e) {
     const wiki = e.source === 'wiki';
-    const paras = String(e.extract || '').split(/\n+/).map(x => x.trim()).filter(Boolean).map((p, i) => `<p>${i === 0 ? boldTitle(p, e.title) : esc(p)}</p>`).join('');
+    const fmt = x => (wiki ? x : md(x));
+    const paras = String(e.extract || '').split(/\n+/).map(x => x.trim()).filter(Boolean).map((p, i) => {
+        const html = (i === 0 && !(!wiki && /\*\*|__/.test(p)) && e.kind !== 'disambig') ? boldTitle(plainMd(p) === p ? p : (wiki ? p : plainMd(p)), e.title) : esc(p);
+        return `<p>${fmt(html)}</p>`;
+    }).join('');
     const photo = wiki && S().wiki.image && e.image ? `<figure class="stp-fig"><img src="${esc(e.image)}" alt="" loading="lazy" referrerpolicy="no-referrer"><figcaption>${esc(e.title)}</figcaption></figure>` : '';
-    const ib = e.infobox && e.infobox.length ? `<table class="stp-ib">${e.infobox.map(r => `<tr><th>${esc(r[0])}</th><td>${esc(r[1])}</td></tr>`).join('')}</table>` : '';
+    const ib = e.infobox && e.infobox.length ? `<table class="stp-ib">${e.infobox.map(r => `<tr><th>${fmt(esc(r[0]))}</th><td>${fmt(esc(r[1]))}</td></tr>`).join('')}</table>` : '';
     const foot = wiki
-        ? `${e.ok === false ? `<div class="stp-loose">${t('loose')}</div>` : ''}<a class="stp-more" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${t('readMore')} →</a>`
+        ? `${e.ok === false ? `<div class="stp-loose">${t('loose')}</div>` : ''}${e.kind === 'disambig' ? `<div class="stp-loose">${t('disambigNote')}</div>` : ''}<a class="stp-more" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${t('readMore')} →</a>`
         : `<div class="stp-ainote">${t('aiNote')}</div>`;
-    return `<div class="stp-sub">${wiki ? t('subWiki') : t('subAi')}</div>${e.description ? `<div class="stp-desc">${esc(e.description)}</div>` : ''}${photo}${paras}${ib}${foot}`;
+    return `<div class="stp-sub">${wiki ? t('subWiki') : t('subAi')}</div>${e.description ? `<div class="stp-desc">${fmt(esc(e.description))}</div>` : ''}${photo}${paras}${ib}${foot}`;
 }
 
 function render() {
@@ -101,7 +125,12 @@ function render() {
     card.dataset.theme = ui.theme;
     card.style.setProperty('--stp-fs', String(ui.fontSize / 100));
     const data = st.data[st.src], status = st.status[st.src];
-    q('.stp-title').textContent = (data && data.title) || st.term;
+    q('.stp-title').textContent = plainMd((data && data.title) || st.term);
+    const favBtn = q('[data-act=fav]'), fav = !!data && status === 'ok' && isFav(data);
+    favBtn.hidden = !(data && status === 'ok');
+    favBtn.classList.toggle('on', fav);
+    favBtn.title = fav ? t('favRemove') : t('favSave');
+    favBtn.innerHTML = `<i class="fa-${fav ? 'solid' : 'regular'} fa-star"></i>`;
 
     const tools = `${st.src === 'wiki' && mode !== 'ai' ? `<button class="stp-ico" data-act="lang" title="${esc(t('langToggle'))}">${ic('language')}</button>` : ''}<button class="stp-ico" data-act="refresh" title="${esc(t('refresh'))}">${ic('rotate')}</button>`;
     const tab = (src, label) => `<button class="stp-tab${st.src === src ? ' on' : ''}${st.status[src] === 'notfound' ? ' dim' : ''}" data-act="tab" data-src="${src}">${label}</button>`;
@@ -117,12 +146,18 @@ function render() {
     q('.stp-body').innerHTML = html;
 }
 
+/** Should the article about the NAME be preferred (a capitalised single word in the middle of a sentence)? */
+function wantsName(st) {
+    const mode = S().wiki.names, single = !/\s/.test(st.term) && /^\p{Lu}/u.test(st.term) && st.term.length >= 3;
+    return mode === 'always' ? single : mode === 'smart' ? single && !!st.midCap : false;
+}
+
 async function load(src, my, opts = {}) {
     const st = current;
     st.src = src; st.status[src] = 'loading'; render();
     try {
         const data = src === 'wiki'
-            ? await lookupWiki(st.term, { strict: S().mode === 'auto' && !opts.loose, lang: st.forceLang })
+            ? await lookupWiki(st.term, { strict: S().mode === 'auto' && !opts.loose, lang: st.forceLang, nameFirst: wantsName(st) })
             : await lookupAI(st.term, st.around, { force: opts.force });
         if (my !== token) return;
         st.data[src] = data; st.status[src] = data ? 'ok' : 'notfound';
@@ -134,10 +169,10 @@ async function load(src, my, opts = {}) {
     render();
 }
 
-export async function openTerm(term, around, anchor, { push = false } = {}) {
+export async function openTerm(term, around, anchor, { push = false, midCap = false } = {}) {
     if (push && current) history.push(current); else history = [];
     const my = ++token, mode = S().mode;
-    current = { term, around, anchor, src: mode === 'ai' ? 'ai' : 'wiki', status: {}, data: {}, err: {}, forceLang: '' };
+    current = { term, around, anchor, midCap, src: mode === 'ai' ? 'ai' : 'wiki', status: {}, data: {}, err: {}, forceLang: '' };
     card.hidden = false; card.classList.add('on');
     position(anchor); render();
     if (mode === 'ai') return load('ai', my);
@@ -160,6 +195,13 @@ export function showSample() {
     card.hidden = false; card.classList.add('on'); position(null); render();
 }
 
+export function showEntry(e) {
+    history = []; token++;
+    const src = e.source === 'ai' ? 'ai' : 'wiki';
+    current = { term: e.term || e.title, around: '', anchor: null, midCap: false, src, status: { [src]: 'ok' }, data: { [src]: { ...e } }, err: {}, forceLang: '' };
+    card.hidden = false; card.classList.add('on'); position(null); render();
+}
+
 export function closeCard() {
     token++; history = []; current = null;
     if (card) { card.hidden = true; card.classList.remove('on'); }
@@ -170,6 +212,7 @@ function onAction(act, el) {
     if (!st) return;
     switch (act) {
         case 'close': closeCard(); break;
+        case 'fav': { const e = st.data[st.src]; if (e) { toggleFav(e, st.term); render(); } break; }
         case 'back': if (history.length) { current = history.pop(); token++; render(); } break;
         case 'tab': {
             const src = el.dataset.src;
@@ -184,6 +227,29 @@ function onAction(act, el) {
     }
 }
 
+/** Desktop only: drag the card by its header. */
+function enableDrag() {
+    const head = card.querySelector('.stp-top');
+    let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    head.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || isCoarse() || innerWidth <= 600 || e.target.closest('button')) return;
+        const r = card.getBoundingClientRect();
+        card.classList.remove('stp-center', 'stp-sheet');
+        card.style.left = r.left + 'px'; card.style.top = r.top + 'px';
+        sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top; drag = true;
+        try { head.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        card.classList.add('stp-dragging'); e.preventDefault();
+    });
+    head.addEventListener('pointermove', e => {
+        if (!drag) return;
+        const x = Math.max(60 - card.offsetWidth, Math.min(innerWidth - 60, ox + e.clientX - sx));
+        const y = Math.max(0, Math.min(innerHeight - 40, oy + e.clientY - sy));
+        card.style.left = x + 'px'; card.style.top = y + 'px';
+    });
+    const end = e => { if (!drag) return; drag = false; card.classList.remove('stp-dragging'); try { head.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ } };
+    head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end);
+}
+
 export function initUi() {
     btn = document.createElement('button');
     btn.className = 'stp-q'; btn.type = 'button'; btn.textContent = '?'; btn.title = t('ask');
@@ -191,8 +257,11 @@ export function initUi() {
 
     card = document.createElement('div');
     card.className = 'stp-card'; card.hidden = true; card.setAttribute('role', 'dialog');
-    card.innerHTML = `<div class="stp-top"><h2 class="stp-title"></h2><div class="stp-win"><button class="stp-ico" data-act="back" title="${esc(t('back'))}" hidden>${ic('arrow-left')}</button><button class="stp-ico" data-act="close" title="${esc(t('close'))}">${ic('xmark')}</button></div></div><div class="stp-tabs"></div><div class="stp-body"></div>`;
+    card.innerHTML = `<div class="stp-top"><h2 class="stp-title"></h2><div class="stp-win"><button class="stp-ico" data-act="fav" hidden><i class="fa-regular fa-star"></i></button><button class="stp-ico" data-act="back" title="${esc(t('back'))}" hidden>${ic('arrow-left')}</button><button class="stp-ico" data-act="close" title="${esc(t('close'))}">${ic('xmark')}</button></div></div><div class="stp-tabs"></div><div class="stp-body"></div>`;
     document.body.appendChild(card);
+
+    enableDrag();
+    bus.addEventListener('favorites', () => { if (!card.hidden) render(); });
 
     btn.addEventListener('mousedown', e => { e.preventDefault(); pressing = true; });
     btn.addEventListener('pointerdown', () => { pressing = true; });
@@ -202,7 +271,7 @@ export function initUi() {
         if (!pending) return;
         const p = pending; hideBtn();
         try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
-        openTerm(p.term, p.around, p.anchor, { push: !card.hidden });
+        openTerm(p.term, p.around, p.anchor, { push: !card.hidden, midCap: p.midCap });
     });
     document.addEventListener('pointerup', () => setTimeout(() => { pressing = false; }, 400));
 

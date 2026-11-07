@@ -1,8 +1,20 @@
-import { S, DEFAULTS, DEFAULT_PROMPT, t, esc, bus, getPath, setPath, saveSettings, getProfiles, loadModels, callLLM, clearCache } from './core.js';
-import { showSample, closeCard } from './ui.js';
+import { S, DEFAULTS, t, esc, bus, getPath, setPath, saveSettings, getProfiles, loadModels, callLLM, clearCache, removeFav } from './core.js';
+import { showSample, showEntry, closeCard } from './ui.js';
 
 let host;
 const err = e => toastr.error(t('errLoad') + (e && e.message ? e.message : e));
+
+function favsHtml() {
+    const list = S().favorites;
+    if (!list.length) return `<small class="stp-note">${t('favEmpty')}</small>`;
+    return list.map(f => {
+        const sub = f.source === 'ai' ? 'AI' : `Wikipedia${f.lang ? ' · ' + f.lang : ''}`;
+        const name = f.source === 'wiki' && f.url
+            ? `<a class="stp-fav-t" href="${esc(f.url)}" target="_blank" rel="noopener noreferrer" title="${esc(t('favOpenWiki'))}">${esc(f.title)}</a>`
+            : `<a class="stp-fav-t" href="#" data-act="favCard" data-key="${esc(f.key)}" title="${esc(t('favCard'))}">${esc(f.title)}</a>`;
+        return `<div class="stp-fav"><i class="fa-solid fa-star stp-fav-star"></i>${name}<span class="stp-fav-sub">${sub}</span><span class="stp-fav-btns"><i class="fa-regular fa-window-maximize stp-fav-b" data-act="favCard" data-key="${esc(f.key)}" title="${esc(t('favCard'))}"></i><i class="fa-solid fa-xmark stp-fav-b" data-act="favDel" data-key="${esc(f.key)}" title="${esc(t('favRemove'))}"></i></span></div>`;
+    }).join('');
+}
 
 function bodyHtml() {
     const s = S(), g = k => getPath(s, k);
@@ -22,7 +34,8 @@ function bodyHtml() {
 <div class="stp-sec"><h4>${t('secSource')}</h4>${row(t('mode'), sel('mode', [['auto', t('modeAuto')], ['wiki', t('modeWiki')], ['ai', t('modeAi')]]))}</div>
 <div class="stp-sec"><h4>${t('secWiki')}</h4>
 ${row(t('wikiLang'), sel('wiki.lang', langs))}${chk('wiki.fallbackEn', t('fallbackEn'))}${chk('wiki.image', t('wikiImage'))}${chk('wiki.infobox', t('wikiInfobox'))}
-${row(t('sentences'), inp('wiki.sentences', 'number', 'min="1" max="10"'))}</div>
+${row(t('sentences'), inp('wiki.sentences', 'number', 'min="1" max="10"'))}${chk('wiki.hideParens', t('hideParens'))}
+${row(t('names'), sel('wiki.names', [['smart', t('nmSmart')], ['always', t('nmAlways')], ['off', t('nmOff')]]))}</div>
 <div class="stp-sec"><h4>${t('secAi')}</h4>
 ${row(t('connMode'), sel('conn.mode', [['profile', t('connProfile')], ['custom', t('connCustom')]], true))}${conn}
 ${row(t('temperature'), inp('conn.temperature', 'number', 'min="0" max="2" step="0.1"'))}${row(t('maxTokens'), inp('maxTokens', 'number', 'min="200" max="6000" step="100"'))}
@@ -31,9 +44,8 @@ ${row(t('articleLang'), sel('ai.articleLang', [['chat', t('alChat')], ['ru', t('
 ${row(t('length'), sel('ai.length', [['short', t('lenShort')], ['medium', t('lenMedium')], ['long', t('lenLong')]]))}
 ${chk('ai.context.card', t('ctxCard'))}${chk('ai.context.persona', t('ctxPersona'))}${chk('ai.context.lorebook', t('ctxLore'))}${chk('ai.context.authorNote', t('ctxNote'))}
 ${row(t('ctxMsgs'), inp('ai.context.chatMessages', 'number', 'min="0" max="30"'))}
-<label class="stp-col"><span>${t('prompt')}</span><textarea class="text_pole stp-in" data-k="ai.prompt" rows="6">${esc(s.ai.prompt || DEFAULT_PROMPT)}</textarea></label>
-<div class="stp-btns"><div class="menu_button" data-act="resetPrompt">${t('promptReset')}</div></div><small class="stp-note">${t('promptNote')}</small>
 ${chk('ai.cache', t('cache'))}<div class="stp-btns"><div class="menu_button" data-act="clearCache">${t('clearCache')}</div></div></div>
+<div class="stp-sec"><h4 id="stp_favs_h">${t('favorites')} (${s.favorites.length})</h4><div id="stp_favs">${favsHtml()}</div></div>
 <div class="stp-sec"><h4>${t('secLook')}</h4>
 ${row(t('theme'), sel('ui.theme', [['wiki', t('thWiki')], ['dark', t('thDark')], ['sepia', t('thSepia')], ['st', t('thSt')]]))}
 ${range('ui.fontSize', t('fontSize'), 80, 140)}${range('ui.width', t('width'), 300, 560, 'px')}
@@ -62,7 +74,6 @@ export function initSettings() {
         if (el.type === 'checkbox') v = el.checked;
         else if (el.type === 'number' || el.type === 'range') { v = Number(el.value); if (!Number.isFinite(v)) return; }
         else v = el.value;
-        if (k === 'ai.prompt' && v.trim() === DEFAULT_PROMPT.trim()) v = '';
         if (getPath(S(), k) === v) return;
         setPath(S(), k, v); saveSettings();
         if (el.type === 'range') { const out = el.parentElement.querySelector('.stp-val'); if (out) out.textContent = v + (k === 'ui.width' ? 'px' : '%'); }
@@ -78,11 +89,17 @@ export function initSettings() {
         if (!a || !host.contains(a)) return;
         switch (a.dataset.act) {
             case 'sample': showSample(); break;
-            case 'resetPrompt': S().ai.prompt = ''; saveSettings(); rebuild(); break;
+            case 'favCard': { e.preventDefault(); const f = S().favorites.find(x => x.key === a.dataset.key); if (f) showEntry(f); break; }
+            case 'favDel': removeFav(a.dataset.key); break;
             case 'clearCache': await clearCache(); toastr.success(t('cleared')); break;
             case 'models': try { const m = await loadModels(); document.getElementById('stp_models').innerHTML = m.map(x => `<option value="${esc(x)}"></option>`).join(''); toastr.success(t('modelsLoaded') + m.length); } catch (er) { err(er); } break;
             case 'test': try { await callLLM([{ role: 'user', content: 'Reply with: OK' }], 200); toastr.success(t('okTest')); } catch (er) { err(er); } break;
         }
     });
     bus.addEventListener('lang', rebuild);
+    bus.addEventListener('favorites', () => {
+        const box = document.getElementById('stp_favs'), h = document.getElementById('stp_favs_h');
+        if (box) box.innerHTML = favsHtml();
+        if (h) h.textContent = `${t('favorites')} (${S().favorites.length})`;
+    });
 }

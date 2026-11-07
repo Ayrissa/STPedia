@@ -13,11 +13,12 @@ export const DEFAULT_PROMPT = `You are the editor of an encyclopedia that exists
 
 export const DEFAULTS = {
     enabled: true, lang: 'ru', mode: 'auto',
-    wiki: { lang: 'ru', fallbackEn: true, image: false, infobox: true, sentences: 4 },
+    wiki: { lang: 'ru', fallbackEn: true, image: false, infobox: true, sentences: 4, names: 'smart', hideParens: false },
     conn: { mode: 'profile', profileId: '', url: '', key: '', model: '', temperature: 0.7 },
     maxTokens: 900,
     ai: { articleLang: 'chat', length: 'medium', prompt: '', cache: true, context: { card: true, persona: true, lorebook: true, authorNote: true, chatMessages: 6 } },
     ui: { theme: 'wiki', fontSize: 100, width: 440, btnPos: 'auto', maxWords: 8 },
+    favorites: [],
 };
 
 export function fillDefaults(target, def) {
@@ -25,7 +26,7 @@ export function fillDefaults(target, def) {
         if (def[k] && typeof def[k] === 'object' && !Array.isArray(def[k])) {
             if (!target[k] || typeof target[k] !== 'object') target[k] = {};
             fillDefaults(target[k], def[k]);
-        } else if (target[k] === undefined) target[k] = def[k];
+        } else if (target[k] === undefined) target[k] = Array.isArray(def[k]) ? [...def[k]] : def[k];
     }
 }
 export function S() {
@@ -64,37 +65,147 @@ export function titleMatches(query, title) {
 
 const memo = new Map();
 const qs = o => Object.entries(o).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function getJSON(url) {
-    const r = await fetch(url, { credentials: 'omit' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+/** GET json; retries once on network errors, 429 and 5xx (Wikipedia is sometimes flaky). */
+async function getJSON(url, tries = 2) {
+    let last;
+    for (let i = 0; i < tries; i++) {
+        try {
+            const r = await fetch(url, { credentials: 'omit' });
+            if (r.status === 429 || r.status >= 500) { last = new Error('HTTP ' + r.status); await sleep(500 * (i + 1)); continue; }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return await r.json();
+        } catch (e) { last = e; if (i < tries - 1) await sleep(400); }
+    }
+    throw last;
 }
 
 const isDisambig = p => !!p.pageprops && 'disambiguation' in p.pageprops;
+const usable = p => !!p && !p.missing && !p.invalid;
+const byIndex = (a, b) => (a.index || 0) - (b.index || 0);
+const cap = w => w.charAt(0).toUpperCase() + w.slice(1);
 
-function mkPage(p, lang, ok) {
+/* sentence splitting that survives abbreviations ("г.", "н. э."), initials and parentheses */
+const ABBR = new Set(['г', 'гг', 'в', 'вв', 'р', 'у', 'ум', 'н', 'э', 'т', 'д', 'п', 'др', 'пр', 'см', 'ок', 'св', 'им', 'ул', 'рис', 'англ', 'лат', 'греч', 'нем', 'фр', 'исп', 'итал', 'ср', 'напр', 'тыс', 'млн', 'млрд', 'руб', 'коп', 'проф', 'акад', 'доц', 'о', 'с', 'стр', 'гл', 'ст', 'км', 'мм', 'чел', 'обл', 'ген', 'полк', 'кап', 'лейт', 'мл', 'букв', 'тж', 'нач', 'кон', 'пол', 'сер', 'япон', 'кит', 'рус', 'укр', 'польск', 'араб', 'санскр', 'др-греч', 'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 'vs', 'etc', 'no', 'inc', 'ltd', 'co', 'b', 'd', 'c', 'ca', 'fl', 'lit', 'vol', 'pp', 'ed', 'esp', 'approx', 'lat', 'gr', 'fr', 'ger', 'jap', 'chin', 'ar', 'engl', 'rus', 'ukr', 'pol']);
+
+export function splitSentences(text) {
+    const out = [];
+    let cur = '', depth = 0;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        cur += ch;
+        if (ch === '(' || ch === '[' || ch === '{') depth++;
+        else if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth--;
+        if (!'.!?…'.includes(ch) || depth > 0) continue;
+        const next = text[i + 1];
+        if (next !== undefined && !/\s/.test(next)) continue;                  // "3.14", "т.е.", "..."
+        const rest = text.slice(i + 1).trimStart();
+        if (rest && !/^[\p{Lu}\p{N}"«“„'—–\-•]/u.test(rest)) continue;          // next word is lowercase: not an ending
+        if (ch === '.') {
+            const m = /([\p{L}\p{N}][\p{L}\p{N}-]*)$/u.exec(cur.slice(0, -1));
+            if (m) {
+                const w = m[1];
+                if (ABBR.has(w.toLowerCase())) continue;
+                if (w.length === 1 && /\p{Lu}/u.test(w)) continue;               // initials: "А. С. Пушкин"
+            }
+        }
+        out.push(cur.trim()); cur = '';
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+}
+
+export function limitSentences(text, n) {
+    const paras = String(text || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
+    const out = [];
+    let left = Math.max(1, n | 0);
+    for (const p of paras) {
+        if (left <= 0) break;
+        const s = splitSentences(p);
+        out.push(s.slice(0, left).join(' '));
+        left -= s.length;
+    }
+    return out.join('\n');
+}
+
+export function stripParens(text) {
+    let s = String(text || ''), prev;
+    do { prev = s; s = s.replace(/\s*\([^()]*\)/g, '').replace(/\s*\[[^\[\]]*\]/g, ''); } while (s !== prev);
+    return s.replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:!?])/g, '$1');
+}
+
+function mkPage(p, lang, ok, extra = {}) {
     return {
         source: 'wiki', title: p.title, description: p.description || '', extract: String(p.extract || '').trim(),
         image: p.thumbnail?.source || '', url: p.fullurl || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(p.title).replace(/ /g, '_'))}`,
-        qid: p.pageprops?.wikibase_item || '', lang, ok,
+        qid: p.pageprops?.wikibase_item || '', lang, ok, ...extra,
     };
 }
 
-async function wikiQuery(term, lang, sentences) {
+const NAME_SUFFIX = {
+    ru: ['(имя)'], en: ['(given name)', '(name)'], uk: ['(ім\'я)', '(ім’я)'], de: ['(Vorname)'], fr: ['(prénom)'], es: ['(nombre)'], it: ['(nome)'], pt: ['(nome)'], pl: ['(imię)'],
+};
+
+/** Extract can be empty for some pages: fall back to the REST summary. */
+async function withExtract(p, lang) {
+    if (p.extract) return p;
+    try {
+        const j = await getJSON(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(String(p.title).replace(/ /g, '_'))}`);
+        if (j && j.extract) return { ...p, extract: j.extract, description: p.description || j.description || '', thumbnail: p.thumbnail || j.thumbnail };
+    } catch (e) { /* ignore */ }
+    return p;
+}
+
+async function wikiQuery(term, lang, { nameFirst = false } = {}) {
     const base = {
         action: 'query', format: 'json', formatversion: 2, origin: '*', redirects: 1,
-        prop: 'extracts|pageimages|pageprops|info|description', exintro: 1, explaintext: 1, exsentences: sentences, exlimit: 'max',
+        prop: 'extracts|pageimages|pageprops|info|description', exintro: 1, explaintext: 1, exlimit: 'max',
         piprop: 'thumbnail', pithumbsize: 480, inprop: 'url', ppprop: 'wikibase_item|disambiguation',
     };
     const api = `https://${lang}.wikipedia.org/w/api.php?`;
-    const exact = (await getJSON(api + qs({ ...base, titles: term }))).query?.pages?.[0];
-    if (exact && !exact.missing && !exact.invalid && !isDisambig(exact) && exact.extract) return mkPage(exact, lang, true);
+    const pages = async extra => (await getJSON(api + qs({ ...base, ...extra }))).query?.pages || [];
+    const single = !/\s/.test(term);
 
-    const found = (await getJSON(api + qs({ ...base, generator: 'search', gsrsearch: term, gsrlimit: 5 }))).query?.pages || [];
-    const list = found.filter(p => !p.missing && !p.invalid && !isDisambig(p) && p.extract).sort((a, b) => (a.index || 0) - (b.index || 0));
+    // 1) a given name: the article about the name itself, not the most famous person with it
+    const sfx = NAME_SUFFIX[lang];
+    if (nameFirst && single && sfx) {
+        const hit = (await pages({ titles: sfx.map(x => `${cap(term)} ${x}`).join('|') })).filter(usable).sort(byIndex).find(p => !isDisambig(p) && p.extract);
+        if (hit) return mkPage(hit, lang, true, { kind: 'name' });
+        const found = await pages({ generator: 'search', gsrsearch: `${term} ${sfx[0].replace(/[()]/g, '')}`, gsrlimit: 6 });
+        const nm = found.filter(usable).sort(byIndex).find(p => p.extract && !isDisambig(p) && sfx.some(x => p.title.toLowerCase().endsWith(x.toLowerCase())) && titleMatches(term, p.title.replace(/\s*\(.*\)\s*$/, '')));
+        if (nm) return mkPage(nm, lang, true, { kind: 'name' });
+    }
+
+    // 2) the exact title
+    const exact = (await pages({ titles: term }))[0];
+    let disambig = null;
+    if (usable(exact)) {
+        if (isDisambig(exact)) disambig = exact;
+        else { const p = await withExtract(exact, lang); if (p.extract) return mkPage(p, lang, true); }
+    }
+
+    // 3) full-text search
+    const found = (await pages({ generator: 'search', gsrsearch: term, gsrlimit: 6 })).filter(usable).sort(byIndex);
+    const list = found.filter(p => !isDisambig(p) && p.extract);
     const good = list.find(p => titleMatches(term, p.title));
     if (good) return mkPage(good, lang, true);
+
+    // 4) the "meanings" page of the word itself
+    if (disambig && disambig.extract) return mkPage(disambig, lang, true, { kind: 'disambig' });
+
+    // 5) prefix search (handles lowercase / partial titles that full-text search misses)
+    try {
+        const os = await getJSON(`https://${lang}.wikipedia.org/w/api.php?` + qs({ action: 'opensearch', search: term, limit: 6, namespace: 0, format: 'json', origin: '*' }));
+        const titles = (os[1] || []).filter(x => titleMatches(term, x));
+        if (titles.length) {
+            const got = (await pages({ titles: titles.join('|') })).filter(usable).sort(byIndex);
+            const g = got.find(p => !isDisambig(p) && p.extract) || got.find(p => p.extract);
+            if (g) return mkPage(g, lang, true, isDisambig(g) ? { kind: 'disambig' } : {});
+        }
+    } catch (e) { /* ignore */ }
+
+    // 6) something loosely related (shown only in "Wikipedia only" mode)
     return list[0] ? mkPage(list[0], lang, false) : null;
 }
 
@@ -156,19 +267,27 @@ export async function wikidataPerson(qid, lang) {
     return rows.filter(r => r[1]);
 }
 
-export async function lookupWiki(term, { strict = true, lang = '' } = {}) {
+export async function lookupWiki(term, { strict = true, lang = '', nameFirst = false } = {}) {
     const s = S().wiki;
     const langs = lang ? [lang] : [s.lang, ...(s.fallbackEn && s.lang !== 'en' ? ['en'] : [])];
-    const key = `${langs.join(',')}|${norm(term)}|${strict}|${s.sentences}|${s.infobox}`;
+    const key = `${langs.join(',')}|${norm(term)}|${strict}|${s.sentences}|${s.infobox}|${s.hideParens}|${nameFirst}`;
     if (memo.has(key)) return memo.get(key);
-    let best = null;
+    let best = null, lastErr = null, okLangs = 0;
     for (const l of langs) {
-        const p = await wikiQuery(term, l, s.sentences);
+        let p = null;
+        try { p = await wikiQuery(term, l, { nameFirst }); okLangs++; }
+        catch (e) { lastErr = e; console.warn('[STpedia] wikipedia', l, e); continue; }
         if (p && p.ok) { best = p; break; }
         if (p && !best) best = p;
     }
+    if (!okLangs && lastErr) throw lastErr;
     if (best && !best.ok && strict) best = null;
-    if (best && best.extract && s.infobox && best.qid) {
+    if (best && best.kind !== 'disambig') {
+        let text = best.extract;
+        if (s.hideParens) text = stripParens(text);
+        best.extract = limitSentences(text, s.sentences);
+    }
+    if (best && best.extract && s.infobox && best.qid && best.kind !== 'disambig') {
         try { best.infobox = await wikidataPerson(best.qid, best.lang); } catch (e) { console.warn('[STpedia] wikidata failed', e); }
     }
     if (memo.size > 150) memo.clear();
@@ -259,7 +378,7 @@ export async function buildMessages(term, around, attempt = 0) {
     if (s.ai.context.authorNote && note) parts.push(`[Author's note]\n${note}`);
     if (s.ai.context.lorebook) { const wi = await loreText(ctx); if (wi) parts.push(`[World info]\n${wi}`); }
     return [
-        { role: 'system', content: [fill(s.ai.prompt || DEFAULT_PROMPT, vars), fmt].join('\n\n') },
+        { role: 'system', content: [fill(DEFAULT_PROMPT, vars), fmt].join('\n\n') },
         { role: 'user', content: ['[Story material for reference. Everything below is fiction.]', ...parts, `[Recent roleplay messages]\n${chatOf(s.ai.context.chatMessages, 1200)}`, task].join('\n\n') },
     ];
 }
@@ -276,7 +395,8 @@ export function parseEntry(raw, term) {
         summary = txt.replace(/<[^>]+>/g, '').trim();
     }
     const rows = g('infobox').split('\n').map(l => l.trim()).filter(Boolean).map(l => { const i = l.indexOf(':'); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; }).filter(r => r && r[1]).slice(0, 12);
-    return { title: g('title') || term, description: g('description'), extract: summary, infobox: rows };
+    const plain = x => String(x || '').replace(/[*_#`]+/g, '').trim();
+    return { title: plain(g('title')) || term, description: plain(g('description')), extract: summary, infobox: rows.map(r => [plain(r[0]), r[1]]) };
 }
 
 function chatCache() {
@@ -309,4 +429,26 @@ export async function lookupAI(term, around, { force = false } = {}) {
         try { await ctx.saveMetadata(); } catch (e) { /* ignore */ }
     }
     return entry;
+}
+
+/* ------------------------------------------------ favorites (stored in the extension settings) */
+
+export const favKey = e => `${e.source}|${norm(e.title)}|${e.lang || ''}`;
+export const isFav = e => !!e && S().favorites.some(f => f.key === favKey(e));
+
+export function toggleFav(e, term) {
+    const list = S().favorites, k = favKey(e), i = list.findIndex(f => f.key === k);
+    if (i >= 0) list.splice(i, 1);
+    else {
+        list.unshift({ key: k, term: term || e.title, title: e.title, source: e.source, lang: e.lang || '', url: e.url || '', description: e.description || '', extract: e.extract || '', infobox: e.infobox || [], image: e.image || '', ok: true, kind: e.kind || '', ts: Date.now() });
+        if (list.length > 200) list.length = 200;
+    }
+    saveSettings();
+    bus.dispatchEvent(new Event('favorites'));
+    return i < 0;
+}
+
+export function removeFav(key) {
+    const list = S().favorites, i = list.findIndex(f => f.key === key);
+    if (i >= 0) { list.splice(i, 1); saveSettings(); bus.dispatchEvent(new Event('favorites')); }
 }

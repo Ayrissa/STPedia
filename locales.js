@@ -21,6 +21,9 @@ export const LOC = {
         cache: 'Запоминать ИИ-статьи в этом чате', clearCache: 'Очистить кэш',
         secLook: 'Оформление', theme: 'Тема плашки', thWiki: 'Википедия (светлая)', thDark: 'Тёмная', thSepia: 'Сепия', thSt: 'Цвета Таверны', fontSize: 'Размер текста', width: 'Ширина плашки', btnPos: 'Кнопка «?»', bpAuto: 'Авто', bpAbove: 'Над выделением', bpBelow: 'Под выделением', bpEnd: 'Справа от выделения', maxWords: 'Макс. слов в выделении',
         sample: 'Показать пример',
+        hideParens: 'Убирать скобки с пояснениями', names: 'Имена', nmSmart: 'Авто: статья об имени (слово с заглавной в середине предложения)', nmAlways: 'Всегда для слов с заглавной буквы', nmOff: 'Выключено',
+        favorites: 'Избранное', favEmpty: 'Пока пусто. Нажмите ☆ на плашке, чтобы сохранить статью.', favSave: 'В избранное', favRemove: 'Убрать из избранного', favOpenWiki: 'Открыть в Википедии', favCard: 'Показать в плашке',
+        disambigNote: 'Это страница значений: выделите нужное значение, чтобы открыть его статью.',
         sampleTitle: 'Икар', sampleBody: 'Икар, в древнегреческой мифологии сын Дедала, который вместе с отцом бежал с Крита на крыльях из перьев и воска. Поднявшись слишком высоко, он приблизился к Солнцу, воск растаял, и юноша упал в море.',
     },
     en: {
@@ -45,6 +48,9 @@ export const LOC = {
         cache: 'Remember AI articles in this chat', clearCache: 'Clear cache',
         secLook: 'Appearance', theme: 'Card theme', thWiki: 'Wikipedia (light)', thDark: 'Dark', thSepia: 'Sepia', thSt: 'SillyTavern colors', fontSize: 'Text size', width: 'Card width', btnPos: '"?" button', bpAuto: 'Auto', bpAbove: 'Above the selection', bpBelow: 'Below the selection', bpEnd: 'Right of the selection', maxWords: 'Max words in selection',
         sample: 'Show an example',
+        hideParens: 'Remove parenthetical notes', names: 'Given names', nmSmart: 'Auto: the name article (capitalised word mid-sentence)', nmAlways: 'Always for capitalised words', nmOff: 'Off',
+        favorites: 'Favorites', favEmpty: 'Nothing here yet. Tap ☆ on the card to save an article.', favSave: 'Add to favorites', favRemove: 'Remove from favorites', favOpenWiki: 'Open on Wikipedia', favCard: 'Show in the card',
+        disambigNote: 'This is a disambiguation page: select the meaning you need to open its article.',
         sampleTitle: 'Icarus', sampleBody: 'Icarus, in Greek mythology, the son of Daedalus, who escaped Crete with his father on wings of feathers and wax. Flying too high, he came close to the Sun, the wax melted, and the boy fell into the sea.',
     },
 };
