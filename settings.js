@@ -49,7 +49,7 @@ ${chk('ai.cache', t('cache'))}<div class="stp-btns"><div class="menu_button" dat
 <div class="stp-sec"><h4>${t('secLook')}</h4>
 ${row(t('theme'), sel('ui.theme', [['wiki', t('thWiki')], ['dark', t('thDark')], ['sepia', t('thSepia')], ['st', t('thSt')]]))}
 ${range('ui.fontSize', t('fontSize'), 80, 140)}${range('ui.width', t('width'), 300, 560, 'px')}
-${row(t('btnPos'), sel('ui.btnPos', [['auto', t('bpAuto')], ['above', t('bpAbove')], ['below', t('bpBelow')], ['end', t('bpEnd')]]))}
+${row(t('btnPos'), sel('ui.btnPos', [['auto', t('bpAuto')], ['above', t('bpAbove')], ['below', t('bpBelow')], ['end', t('bpEnd')], ['screen', t('bpScreen')]]))}
 ${row(t('maxWords'), inp('ui.maxWords', 'number', 'min="1" max="20"'))}
 <div class="stp-btns"><div class="menu_button" data-act="sample">${t('sample')}</div></div></div>`;
 }

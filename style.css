@@ -94,3 +94,18 @@
 .stp-settings .stp-fav-btns { display: flex; gap: 4px; }
 .stp-settings .stp-fav-b { padding: 8px; cursor: pointer; opacity: .75; }
 .stp-settings .stp-fav-b:hover { opacity: 1; }
+
+/* ===== touch: pill button at the bottom, bigger tap targets, no accidental text selection on controls ===== */
+.stp-q.stp-pill { left: 50%; top: auto; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: auto; max-width: calc(100vw - 24px); height: 48px; padding: 0 22px 0 8px; border-radius: 24px;
+    display: none; align-items: center; gap: 8px; font: 600 16px/1 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; white-space: nowrap; }
+.stp-q.stp-pill.on { display: flex; animation: none; }
+.stp-q.stp-pill .stp-qm { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(255, 255, 255, .2); font: 700 21px/1 Georgia, serif; }
+.stp-q.stp-pill::after { top: -10px; right: -10px; bottom: -10px; left: -10px; }
+.stp-q { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.stp-ico, .stp-tab, .stp-btn { -webkit-user-select: none; user-select: none; }
+@media (pointer: coarse) {
+    .stp-ico { width: 44px; height: 44px; font-size: 18px; }
+    .stp-tools .stp-ico { width: 42px; height: 40px; }
+    .stp-tab { min-height: 44px; display: inline-flex; align-items: center; padding-top: 0; padding-bottom: 0; }
+    .stp-btn { min-height: 44px; }
+}

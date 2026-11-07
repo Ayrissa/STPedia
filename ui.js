@@ -2,7 +2,9 @@ import { S, t, esc, lookupWiki, lookupAI, aiConfigured, toggleFav, isFav, bus } 
 
 let btn, card, current = null, history = [], token = 0, pending = null, pressing = false, selTimer = 0;
 const ic = n => `<i class="fa-solid fa-${n}"></i>`;
-const isCoarse = () => !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+const mq = q => !!(window.matchMedia && window.matchMedia(q).matches);
+/** A touch device (some phone browsers in "desktop site" mode do not report a coarse pointer). */
+const isCoarse = () => mq('(pointer: coarse)') || (navigator.maxTouchPoints > 0 && !(mq('(any-pointer: fine)') && mq('(hover: hover)')));
 const q = sel => card.querySelector(sel);
 
 /* ------------------------------------------------ selection -> "?" button */
@@ -39,7 +41,9 @@ function placeButton(range) {
     if (!rects.length) return false;
     const first = rects[0], last = rects[rects.length - 1], size = 36, gap = 8;
     let pos = S().ui.btnPos;
-    if (pos === 'auto') pos = isCoarse() ? 'end' : 'above';
+    if (pos === 'auto') pos = isCoarse() ? 'screen' : 'above';
+    setPill(pos === 'screen');
+    if (pos === 'screen') return true;
     let x = 0, y = 0;
     if (pos === 'above') { x = first.left + first.width / 2 - size / 2; y = first.top - size - gap; if (y < 8) pos = 'below'; }
     if (pos === 'below') { x = last.left + last.width / 2 - size / 2; y = last.bottom + gap; }
@@ -53,6 +57,23 @@ function placeButton(range) {
 }
 
 const hideBtn = () => btn && btn.classList.remove('on');
+
+/** On touch screens the button is a pill at the bottom of the screen: away from the selection handles and the system toolbar. */
+function setPill(on) {
+    btn.classList.toggle('stp-pill', on);
+    if (on) { btn.style.left = ''; btn.style.top = ''; btn.innerHTML = `<span class="stp-qm">?</span><span class="stp-ql">${esc(t('ask'))}</span>`; }
+    else btn.textContent = '?';
+}
+
+let fireLock = 0;
+function fireButton() {
+    if (Date.now() < fireLock || !pending) return;
+    fireLock = Date.now() + 700;
+    pressing = false;
+    const p = pending; hideBtn();
+    try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
+    openTerm(p.term, p.around, p.anchor, { push: !card.hidden, midCap: p.midCap });
+}
 
 function onSelectionChange() {
     clearTimeout(selTimer);
@@ -266,13 +287,17 @@ export function initUi() {
     btn.addEventListener('mousedown', e => { e.preventDefault(); pressing = true; });
     btn.addEventListener('pointerdown', () => { pressing = true; });
     btn.addEventListener('contextmenu', e => e.preventDefault());
-    btn.addEventListener('click', e => {
-        e.preventDefault(); e.stopPropagation(); pressing = false;
-        if (!pending) return;
-        const p = pending; hideBtn();
-        try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
-        openTerm(p.term, p.around, p.anchor, { push: !card.hidden, midCap: p.midCap });
-    });
+    // touch: handle the tap ourselves (touchstart is cancelled so the selection survives and no ghost click follows)
+    let tStart = null;
+    btn.addEventListener('touchstart', e => { pressing = true; const t0 = e.changedTouches[0]; tStart = { x: t0.clientX, y: t0.clientY }; e.preventDefault(); }, { passive: false });
+    btn.addEventListener('touchend', e => {
+        e.preventDefault();
+        const t0 = e.changedTouches[0];
+        if (tStart && Math.abs(t0.clientX - tStart.x) < 24 && Math.abs(t0.clientY - tStart.y) < 24) fireButton();
+        tStart = null;
+    }, { passive: false });
+    btn.addEventListener('touchcancel', () => { tStart = null; });
+    btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); fireButton(); });
     document.addEventListener('pointerup', () => setTimeout(() => { pressing = false; }, 400));
 
     card.addEventListener('click', e => { const a = e.target.closest('[data-act]'); if (a) onAction(a.dataset.act, a); });
@@ -283,6 +308,7 @@ export function initUi() {
         closeCard();
     }, true);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCard(); });
-    window.addEventListener('resize', () => { if (!card.hidden) position(current && current.anchor); hideBtn(); });
-    window.addEventListener('scroll', () => { hideBtn(); onSelectionChange(); }, true);
+    // the button must not vanish while a finger is on it (phones fire resize/scroll when the URL bar or selection handles move)
+    window.addEventListener('resize', () => { if (!card.hidden) position(current && current.anchor); if (!btn.classList.contains('stp-pill') && !pressing) hideBtn(); onSelectionChange(); });
+    window.addEventListener('scroll', () => { if (!btn.classList.contains('stp-pill') && !pressing) hideBtn(); onSelectionChange(); }, true);
 }
