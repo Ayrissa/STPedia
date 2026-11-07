@@ -30,7 +30,7 @@
 .stp-ico[hidden] { display: none; }
 
 .stp-tabs { flex: none; display: flex; align-items: center; gap: 18px; padding: 0 14px; border-bottom: 1px solid var(--stp-line); }
-.stp-tab { padding: 8px 0 6px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--stp-muted); font: 700 .95em/1.2 inherit; font-family: inherit; cursor: pointer; touch-action: manipulation; }
+.stp-tab { white-space: nowrap; padding: 8px 0 6px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--stp-muted); font: 700 .95em/1.2 inherit; font-family: inherit; cursor: pointer; touch-action: manipulation; }
 .stp-tab.on { color: var(--stp-fg); border-bottom-color: var(--stp-fg); }
 .stp-tab.dim { opacity: .55; }
 .stp-tools { margin-left: auto; display: flex; }
@@ -77,3 +77,6 @@
     .stp-settings .stp-row > span:first-child { flex: none; }
     .stp-settings .stp-range { flex: none; width: 100%; }
 }
+
+/* on phones the sheet is a little taller than 4:3 so a person card is readable */
+@media (max-width: 600px) { .stp-card.stp-sheet { height: min(calc(var(--stp-w) * 1.1), 62vh); height: min(calc(var(--stp-w) * 1.1), 62dvh); } }

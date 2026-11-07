@@ -68,7 +68,7 @@ export function initSettings() {
         if (el.type === 'range') { const out = el.parentElement.querySelector('.stp-val'); if (out) out.textContent = v + (k === 'ui.width' ? 'px' : '%'); }
         if (k === 'enabled') { bus.dispatchEvent(new Event('enabled')); if (!v) closeCard(); }
         if (k === 'lang') bus.dispatchEvent(new Event('lang'));
-        if (el.dataset.rr) { const sc = document.scrollingElement ? document.scrollingElement.scrollTop : 0; rebuild(); }
+        if (el.dataset.rr) rebuild();
     };
     host.addEventListener('input', onInput);
     host.addEventListener('change', onInput);

@@ -44,13 +44,20 @@ const fill = (str, vars) => String(str).replace(/\{\{(\w+)\}\}/g, (m, k) => (k i
 /* ------------------------------------------------ text matching */
 
 export const norm = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-const stem = w => (w.length <= 4 ? w : w.slice(0, Math.max(4, w.length - 2)));
+function sameWord(w, x) {
+    if (w === x) return true;
+    const m = Math.min(w.length, x.length);
+    if (m < 4 || Math.abs(w.length - x.length) > 3) return false;
+    let cp = 0;
+    while (cp < m && w[cp] === x[cp]) cp++;
+    return cp >= (m === 4 ? 4 : m - 1); // endings may differ (Russian inflection), the stem may not
+}
 
 /** Does a Wikipedia title plausibly match what the user selected (handles Russian inflection)? */
 export function titleMatches(query, title) {
     const q = norm(query).split(' ').filter(Boolean), tt = norm(title).split(' ').filter(Boolean);
     if (!q.length || !tt.length) return false;
-    return q.every(w => { const sw = stem(w); return tt.some(x => { const sx = stem(x); return sx === sw || x.startsWith(sw) || w.startsWith(sx); }); });
+    return q.every(w => tt.some(x => sameWord(w, x)));
 }
 
 /* ------------------------------------------------ Wikipedia + Wikidata */

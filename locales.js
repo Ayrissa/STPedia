@@ -1,7 +1,7 @@
 export const LOC = {
     ru: {
         appName: 'STpedia', ask: 'Что это?', back: 'Назад', close: 'Закрыть', refresh: 'Обновить', langToggle: 'Сменить язык Википедии', retry: 'Повторить',
-        tabWiki: 'Википедия', tabAi: 'ИИ-энциклопедия', subWiki: 'Из Википедии, свободной энциклопедии', subAi: 'Из STpedia, энциклопедии мира этой истории',
+        tabWiki: 'Википедия', tabAi: 'ИИ', subWiki: 'Из Википедии, свободной энциклопедии', subAi: 'Из STpedia, энциклопедии мира этой истории',
         loading: 'Загрузка…', writing: 'Статья пишется…', notFound: 'Статья не найдена', notFoundHint: 'Включите ИИ-режим в настройках STpedia, чтобы получать статьи о вымышленных понятиях.',
         loose: 'Возможно, это не то, что вы искали.', aiNote: 'Статья создана ИИ по мотивам этой истории и может не соответствовать реальности.', readMore: 'Читать в Википедии',
         ibBirth: 'Дата рождения', ibBirthPlace: 'Место рождения', ibDeath: 'Дата смерти', ibDeathPlace: 'Место смерти', ibCountry: 'Страна', ibOccupation: 'Род деятельности',
@@ -25,7 +25,7 @@ export const LOC = {
     },
     en: {
         appName: 'STpedia', ask: 'What is this?', back: 'Back', close: 'Close', refresh: 'Refresh', langToggle: 'Switch Wikipedia language', retry: 'Retry',
-        tabWiki: 'Wikipedia', tabAi: 'AI encyclopedia', subWiki: 'From Wikipedia, the free encyclopedia', subAi: 'From STpedia, the encyclopedia of this story\'s world',
+        tabWiki: 'Wikipedia', tabAi: 'AI', subWiki: 'From Wikipedia, the free encyclopedia', subAi: 'From STpedia, the encyclopedia of this story\'s world',
         loading: 'Loading…', writing: 'Writing the article…', notFound: 'Article not found', notFoundHint: 'Enable the AI mode in STpedia settings to get articles about fictional terms.',
         loose: 'This may not be what you were looking for.', aiNote: 'This article was created by AI based on this story and may not match reality.', readMore: 'Read on Wikipedia',
         ibBirth: 'Born', ibBirthPlace: 'Birthplace', ibDeath: 'Died', ibDeathPlace: 'Place of death', ibCountry: 'Country', ibOccupation: 'Occupation',
