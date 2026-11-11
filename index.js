@@ -31,4 +31,12 @@ function boot() {
     bus.addEventListener('enabled', () => { if (!S().enabled) closeCard(); });
 }
 
+window.addEventListener('error', e => {
+    if (/stpedia/i.test(String(e.filename || ''))) { try { toastr.error(`STpedia: ${e.message}`); } catch (er) { /* ignore */ } }
+});
+window.addEventListener('unhandledrejection', e => {
+    const st = String((e.reason && e.reason.stack) || '');
+    if (/stpedia/i.test(st)) { try { toastr.error(`STpedia: ${(e.reason && e.reason.message) || e.reason}`); } catch (er) { /* ignore */ } }
+});
+
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

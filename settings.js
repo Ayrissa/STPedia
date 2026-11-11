@@ -1,5 +1,5 @@
 import { S, DEFAULTS, t, esc, bus, getPath, setPath, saveSettings, getProfiles, loadModels, callLLM, clearCache, removeFav } from './core.js';
-import { showSample, showEntry, closeCard } from './ui.js';
+import { showSample, showEntry, closeCard, diagnose } from './ui.js';
 
 let host;
 const err = e => toastr.error(t('errLoad') + (e && e.message ? e.message : e));
@@ -51,7 +51,7 @@ ${row(t('theme'), sel('ui.theme', [['wiki', t('thWiki')], ['dark', t('thDark')],
 ${range('ui.fontSize', t('fontSize'), 80, 140)}${range('ui.width', t('width'), 300, 560, 'px')}
 ${row(t('btnPos'), sel('ui.btnPos', [['auto', t('bpAuto')], ['above', t('bpAbove')], ['below', t('bpBelow')], ['end', t('bpEnd')], ['screen', t('bpScreen')]]))}
 ${row(t('maxWords'), inp('ui.maxWords', 'number', 'min="1" max="20"'))}
-<div class="stp-btns"><div class="menu_button" data-act="sample">${t('sample')}</div></div></div>`;
+<div class="stp-btns"><div class="menu_button" data-act="sample">${t('sample')}</div><div class="menu_button" data-act="diag">${t('diag')}</div></div></div>`;
 }
 
 function rebuild() {
@@ -88,7 +88,8 @@ export function initSettings() {
         const a = e.target.closest('[data-act]');
         if (!a || !host.contains(a)) return;
         switch (a.dataset.act) {
-            case 'sample': showSample(); break;
+            case 'sample': try { showSample(); } catch (er) { alert('STpedia: ' + (er && er.message ? er.message : er)); } break;
+            case 'diag': diagnose(); break;
             case 'favCard': { e.preventDefault(); const f = S().favorites.find(x => x.key === a.dataset.key); if (f) showEntry(f); break; }
             case 'favDel': removeFav(a.dataset.key); break;
             case 'clearCache': await clearCache(); toastr.success(t('cleared')); break;

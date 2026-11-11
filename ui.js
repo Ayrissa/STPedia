@@ -2,6 +2,19 @@ import { S, t, esc, lookupWiki, lookupAI, aiConfigured, toggleFav, isFav, bus } 
 
 let btn, card, current = null, history = [], token = 0, pending = null, pressing = false, selTimer = 0;
 const ic = n => `<i class="fa-solid fa-${n}"></i>`;
+const hasPopover = typeof HTMLElement !== 'undefined' && 'showPopover' in HTMLElement.prototype;
+/** The top layer is above every z-index, so SillyTavern's own drawers and overlays can never cover or block the card. */
+function topLayer(el, on) {
+    if (!hasPopover || !el) return;
+    try {
+        const open = el.matches(':popover-open');
+        if (on && !open) el.showPopover(); else if (!on && open) el.hidePopover();
+    } catch (e) { /* ignore */ }
+}
+const reportError = e => { console.error('[STpedia]', e); try { toastr.error('STpedia: ' + (e && e.message ? e.message : e)); } catch (er) { /* ignore */ } };
+const showCard = () => { card.hidden = false; card.classList.add('on'); topLayer(card, true); };
+const hideCard = () => { topLayer(card, false); card.hidden = true; card.classList.remove('on'); };
+const showBtn = () => { btn.classList.add('on'); topLayer(btn, true); };
 const mq = q => !!(window.matchMedia && window.matchMedia(q).matches);
 /** A touch device (some phone browsers in "desktop site" mode do not report a coarse pointer). */
 const isCoarse = () => mq('(pointer: coarse)') || (navigator.maxTouchPoints > 0 && !(mq('(any-pointer: fine)') && mq('(hover: hover)')));
@@ -56,13 +69,18 @@ function placeButton(range) {
     return true;
 }
 
-const hideBtn = () => btn && btn.classList.remove('on');
+const hideBtn = () => { if (btn) { btn.classList.remove('on'); topLayer(btn, false); } };
 
 /** On touch screens the button is a pill at the bottom of the screen: away from the selection handles and the system toolbar. */
 function setPill(on) {
     btn.classList.toggle('stp-pill', on);
-    if (on) { btn.style.left = ''; btn.style.top = ''; btn.innerHTML = `<span class="stp-qm">?</span><span class="stp-ql">${esc(t('ask'))}</span>`; }
-    else btn.textContent = '?';
+    const label = btn.querySelector('.stp-ql');
+    const text = on ? t('ask') : '';
+    if (label && label.textContent !== text) label.textContent = text;   // never replace the nodes: a finger may be resting on them
+    if (on) {
+        const vv = window.visualViewport, vh = vv ? vv.height : innerHeight, oy = vv ? vv.offsetTop : 0;
+        btn.style.left = ''; btn.style.top = Math.max(8, oy + vh - 48 - 100) + 'px';
+    }
 }
 
 let fireLock = 0;
@@ -72,36 +90,42 @@ function fireButton() {
     pressing = false;
     const p = pending; hideBtn();
     try { window.getSelection().removeAllRanges(); } catch (err) { /* ignore */ }
-    openTerm(p.term, p.around, p.anchor, { push: !card.hidden, midCap: p.midCap });
+    openTerm(p.term, p.around, p.anchor, { push: !card.hidden, midCap: p.midCap }).catch(reportError);
 }
 
 function onSelectionChange() {
     clearTimeout(selTimer);
     selTimer = setTimeout(() => {
+        if (pressing) return;                       // a finger is on the button: do not touch it
         if (!S().enabled) return hideBtn();
         const r = readSelection();
         if (!r) { if (!pressing) hideBtn(); return; }
         const rc = r.range.getBoundingClientRect();
         pending = { term: r.term, around: r.around, midCap: r.midCap, anchor: { left: rc.left, right: rc.right, top: rc.top, bottom: rc.bottom } };
-        if (placeButton(r.range)) btn.classList.add('on');
+        if (placeButton(r.range)) showBtn();
     }, isCoarse() ? 350 : 150);
 }
 
 /* ------------------------------------------------ card */
 
 function position(anchor) {
-    const w = Math.min(S().ui.width, innerWidth - 16);
+    const vv = window.visualViewport;
+    const vw = vv ? vv.width : innerWidth, vh = vv ? vv.height : innerHeight, ox = vv ? vv.offsetLeft : 0, oy = vv ? vv.offsetTop : 0;
+    const w = Math.max(220, Math.min(S().ui.width, vw - 16));
+    const sheet = vw <= 600;
+    const h = Math.round(sheet ? Math.min(w * 1.1, vh * 0.62) : Math.min(w * 0.75, vh * 0.7));
     card.style.setProperty('--stp-w', w + 'px');
-    const sheet = innerWidth <= 600;
-    card.classList.toggle('stp-sheet', sheet);
-    card.classList.toggle('stp-center', !sheet && !anchor);
-    if (sheet || !anchor) { card.style.left = ''; card.style.top = ''; return; }
-    const h = Math.min(w * 0.75, innerHeight * 0.7);
-    const left = Math.max(8, Math.min(innerWidth - w - 8, anchor.left));
-    let top = anchor.bottom + 10;
-    if (top + h > innerHeight - 8) top = anchor.top - h - 10;
-    if (top < 8) top = Math.max(8, Math.min(innerHeight - h - 8, anchor.bottom + 10));
-    card.style.left = left + 'px'; card.style.top = top + 'px';
+    card.style.width = w + 'px'; card.style.height = h + 'px';
+    let left, top;
+    if (sheet) { left = ox + (vw - w) / 2; top = oy + vh - h - 12; }
+    else if (!anchor) { left = ox + (vw - w) / 2; top = oy + (vh - h) / 2; }
+    else {
+        left = Math.max(8, Math.min(vw - w - 8, anchor.left));
+        top = anchor.bottom + 10;
+        if (top + h > vh - 8) top = anchor.top - h - 10;
+        if (top < 8) top = Math.max(8, Math.min(vh - h - 8, anchor.bottom + 10));
+    }
+    card.style.left = Math.round(left) + 'px'; card.style.top = Math.round(Math.max(0, top)) + 'px';
 }
 
 function boldTitle(text, title) {
@@ -139,6 +163,8 @@ function entryHtml(e) {
     return `<div class="stp-sub">${wiki ? t('subWiki') : t('subAi')}</div>${e.description ? `<div class="stp-desc">${fmt(esc(e.description))}</div>` : ''}${photo}${paras}${ib}${foot}`;
 }
 
+const setHtml = (el, html) => { if (el._h !== html) { el.innerHTML = html; el._h = html; } };
+
 function render() {
     const st = current;
     if (!st || !card) return;
@@ -151,12 +177,13 @@ function render() {
     favBtn.hidden = !(data && status === 'ok');
     favBtn.classList.toggle('on', fav);
     favBtn.title = fav ? t('favRemove') : t('favSave');
-    favBtn.innerHTML = `<i class="fa-${fav ? 'solid' : 'regular'} fa-star"></i>`;
+    const favHtml = `<i class="fa-${fav ? 'solid' : 'regular'} fa-star"></i>`;
+    if (favBtn._h !== favHtml) { favBtn.innerHTML = favHtml; favBtn._h = favHtml; }
 
     const tools = `${st.src === 'wiki' && mode !== 'ai' ? `<button class="stp-ico" data-act="lang" title="${esc(t('langToggle'))}">${ic('language')}</button>` : ''}<button class="stp-ico" data-act="refresh" title="${esc(t('refresh'))}">${ic('rotate')}</button>`;
     const tab = (src, label) => `<button class="stp-tab${st.src === src ? ' on' : ''}${st.status[src] === 'notfound' ? ' dim' : ''}" data-act="tab" data-src="${src}">${label}</button>`;
     const tabs = mode === 'auto' ? tab('wiki', t('tabWiki')) + tab('ai', t('tabAi')) : `<span class="stp-tab on">${mode === 'ai' ? t('tabAi') : t('tabWiki')}</span>`;
-    q('.stp-tabs').innerHTML = `${tabs}<span class="stp-tools">${tools}</span>`;
+    setHtml(q('.stp-tabs'), `${tabs}<span class="stp-tools">${tools}</span>`);
     q('[data-act=back]').hidden = !history.length;
 
     let html;
@@ -164,7 +191,7 @@ function render() {
     else if (status === 'error') html = `<p class="stp-err">${esc(t('errLoad') + (st.err[st.src] || ''))}</p><button class="stp-btn" data-act="retry">${t('retry')}</button>`;
     else if (status === 'notfound') html = `<p>${t('notFound')}</p>${!aiConfigured() && mode !== 'wiki' ? `<p class="stp-sub">${t('notFoundHint')}</p>` : ''}`;
     else html = entryHtml(data);
-    q('.stp-body').innerHTML = html;
+    setHtml(q('.stp-body'), html);
 }
 
 /** Should the article about the NAME be preferred (a capitalised single word in the middle of a sentence)? */
@@ -194,7 +221,7 @@ export async function openTerm(term, around, anchor, { push = false, midCap = fa
     if (push && current) history.push(current); else history = [];
     const my = ++token, mode = S().mode;
     current = { term, around, anchor, midCap, src: mode === 'ai' ? 'ai' : 'wiki', status: {}, data: {}, err: {}, forceLang: '' };
-    card.hidden = false; card.classList.add('on');
+    showCard();
     position(anchor); render();
     if (mode === 'ai') return load('ai', my);
     if (mode === 'wiki') return load('wiki', my, { loose: true });
@@ -213,19 +240,19 @@ export function showSample() {
                 : [['Born', '14 March 1879'], ['Birthplace', 'Ulm, Kingdom of Württemberg'], ['Died', '18 April 1955 (76 years)'], ['Country', 'Germany, Switzerland, USA'], ['Occupation', 'theoretical physicist, philosopher of science']],
         } },
     };
-    card.hidden = false; card.classList.add('on'); position(null); render();
+    showCard(); position(null); render();
 }
 
 export function showEntry(e) {
     history = []; token++;
     const src = e.source === 'ai' ? 'ai' : 'wiki';
     current = { term: e.term || e.title, around: '', anchor: null, midCap: false, src, status: { [src]: 'ok' }, data: { [src]: { ...e } }, err: {}, forceLang: '' };
-    card.hidden = false; card.classList.add('on'); position(null); render();
+    showCard(); position(null); render();
 }
 
 export function closeCard() {
     token++; history = []; current = null;
-    if (card) { card.hidden = true; card.classList.remove('on'); }
+    if (card) hideCard();
 }
 
 function onAction(act, el) {
@@ -273,11 +300,14 @@ function enableDrag() {
 
 export function initUi() {
     btn = document.createElement('button');
-    btn.className = 'stp-q'; btn.type = 'button'; btn.textContent = '?'; btn.title = t('ask');
+    btn.className = 'stp-q'; btn.type = 'button'; btn.title = t('ask');
+    btn.innerHTML = '<span class="stp-qm">?</span><span class="stp-ql"></span>';
+    if (hasPopover) btn.setAttribute('popover', 'manual');
     document.body.appendChild(btn);
 
     card = document.createElement('div');
     card.className = 'stp-card'; card.hidden = true; card.setAttribute('role', 'dialog');
+    if (hasPopover) card.setAttribute('popover', 'manual');
     card.innerHTML = `<div class="stp-top"><h2 class="stp-title"></h2><div class="stp-win"><button class="stp-ico" data-act="fav" hidden><i class="fa-regular fa-star"></i></button><button class="stp-ico" data-act="back" title="${esc(t('back'))}" hidden>${ic('arrow-left')}</button><button class="stp-ico" data-act="close" title="${esc(t('close'))}">${ic('xmark')}</button></div></div><div class="stp-tabs"></div><div class="stp-body"></div>`;
     document.body.appendChild(card);
 
@@ -308,7 +338,31 @@ export function initUi() {
         closeCard();
     }, true);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCard(); });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (!card.hidden) position(current && current.anchor); if (!pressing) onSelectionChange(); });
     // the button must not vanish while a finger is on it (phones fire resize/scroll when the URL bar or selection handles move)
     window.addEventListener('resize', () => { if (!card.hidden) position(current && current.anchor); if (!btn.classList.contains('stp-pill') && !pressing) hideBtn(); onSelectionChange(); });
     window.addEventListener('scroll', () => { if (!btn.classList.contains('stp-pill') && !pressing) hideBtn(); onSelectionChange(); }, true);
+}
+
+/** Opens the sample card and shows a report (native alert: works even if the card itself is invisible). */
+export async function diagnose() {
+    const vv = window.visualViewport, L = [];
+    L.push('STpedia diagnostics');
+    L.push('UA: ' + navigator.userAgent);
+    L.push(`inner ${innerWidth}x${innerHeight}, dpr ${window.devicePixelRatio}, visual ${vv ? Math.round(vv.width) + 'x' + Math.round(vv.height) + ' @' + Math.round(vv.offsetLeft) + ',' + Math.round(vv.offsetTop) : 'n/a'}`);
+    L.push(`touchPoints ${navigator.maxTouchPoints}, coarse ${mq('(pointer: coarse)')}, hover ${mq('(hover: hover)')}, popover ${hasPopover}`);
+    L.push(`button ${!!btn}, card ${!!card}, enabled ${S().enabled}`);
+    try {
+        showSample();
+        await new Promise(r => setTimeout(r, 400));
+        const r = card.getBoundingClientRect(), cs = getComputedStyle(card);
+        let open = 'n/a'; try { open = card.matches(':popover-open'); } catch (e) { /* ignore */ }
+        L.push(`card rect ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}; display ${cs.display}; visibility ${cs.visibility}; opacity ${cs.opacity}; z ${cs.zIndex}; popoverOpen ${open}`);
+        const pts = [[0.5, 0.5], [0.5, 0.15], [0.9, 0.1]];
+        pts.forEach(([fx, fy]) => {
+            const el = document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy);
+            L.push(`element at ${fx},${fy}: ${el ? el.tagName + '.' + String(el.className).slice(0, 40) : 'null'} | inside card: ${!!(el && card.contains(el))}`);
+        });
+    } catch (e) { L.push('ERROR: ' + (e && e.message ? e.message : e)); }
+    alert(L.join('\n'));
 }
