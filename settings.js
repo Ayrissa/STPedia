@@ -35,7 +35,7 @@ function bodyHtml() {
 <div class="stp-sec"><h4>${t('secWiki')}</h4>
 ${row(t('wikiLang'), sel('wiki.lang', langs))}${chk('wiki.fallbackEn', t('fallbackEn'))}${chk('wiki.image', t('wikiImage'))}${chk('wiki.infobox', t('wikiInfobox'))}
 ${row(t('sentences'), inp('wiki.sentences', 'number', 'min="1" max="10"'))}${chk('wiki.hideParens', t('hideParens'))}
-${row(t('names'), sel('wiki.names', [['smart', t('nmSmart')], ['always', t('nmAlways')], ['off', t('nmOff')]]))}</div>
+${row(t('names'), sel('wiki.names', [['name', t('nmName')], ['mid', t('nmMid')], ['off', t('nmOff')]]))}</div>
 <div class="stp-sec"><h4>${t('secAi')}</h4>
 ${row(t('connMode'), sel('conn.mode', [['profile', t('connProfile')], ['custom', t('connCustom')]], true))}${conn}
 ${row(t('temperature'), inp('conn.temperature', 'number', 'min="0" max="2" step="0.1"'))}${row(t('maxTokens'), inp('maxTokens', 'number', 'min="200" max="6000" step="100"'))}

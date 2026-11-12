@@ -13,7 +13,7 @@ export const DEFAULT_PROMPT = `You are the editor of an encyclopedia that exists
 
 export const DEFAULTS = {
     enabled: true, lang: 'ru', mode: 'auto',
-    wiki: { lang: 'ru', fallbackEn: true, image: false, infobox: true, sentences: 4, names: 'smart', hideParens: false },
+    wiki: { lang: 'ru', fallbackEn: true, image: false, infobox: true, sentences: 4, names: 'name', hideParens: false },
     conn: { mode: 'profile', profileId: '', url: '', key: '', model: '', temperature: 0.7 },
     maxTokens: 900,
     ai: { articleLang: 'chat', length: 'medium', prompt: '', cache: true, context: { card: true, persona: true, lorebook: true, authorNote: true, chatMessages: 6 } },
@@ -58,7 +58,7 @@ function sameWord(w, x) {
 export function titleMatches(query, title) {
     const q = norm(query).split(' ').filter(Boolean), tt = norm(title).split(' ').filter(Boolean);
     if (!q.length || !tt.length) return false;
-    return q.every(w => tt.some(x => sameWord(w, x)));
+    return q.every(w => tt.some(x => sameWord(w, x) || wordForms(w, 'ru').some(f => norm(f) === x)));
 }
 
 /* ------------------------------------------------ Wikipedia + Wikidata */
@@ -157,6 +157,29 @@ async function withExtract(p, lang) {
     return p;
 }
 
+const baseTitle = title => String(title || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+const tokenCount = title => baseTitle(title).split(/\s+/).filter(Boolean).length;
+
+/** Guesses of the dictionary form of a (possibly inflected) word: "Эдварда" -> "Эдвард", "замка" -> "замок". */
+export function wordForms(word, lang) {
+    const w = String(word), out = [w];
+    const ru = lang === 'ru' || lang === 'uk';
+    for (let k = 1; k <= 3; k++) {
+        if (w.length - k < 3) break;
+        const stem = w.slice(0, -k);
+        if (k === 1) { out.push(stem); if (ru) for (const e of ['а', 'я', 'ь', 'й', 'о', 'е', 'ы', 'и']) out.push(stem + e); }
+        else if (ru) for (const e of ['ок', 'ек', 'ец', 'ень', 'ь', 'й', 'а', 'я', 'о', 'е']) out.push(stem + e);
+        else if (k === 2 && stem.length >= 4) out.push(stem);
+    }
+    return [...new Set(out)].slice(0, 40);
+}
+
+export function nameForms(word) {
+    const w = String(word), out = [w];
+    for (let k = 1; k <= 2; k++) if (w.length - k >= 3) out.push(w.slice(0, -k));
+    return out;
+}
+
 async function wikiQuery(term, lang, { nameFirst = false } = {}) {
     const base = {
         action: 'query', format: 'json', formatversion: 2, origin: '*', redirects: 1,
@@ -164,49 +187,67 @@ async function wikiQuery(term, lang, { nameFirst = false } = {}) {
         piprop: 'thumbnail', pithumbsize: 480, inprop: 'url', ppprop: 'wikibase_item|disambiguation',
     };
     const api = `https://${lang}.wikipedia.org/w/api.php?`;
-    const pages = async extra => (await getJSON(api + qs({ ...base, ...extra }))).query?.pages || [];
+    const raw = async extra => (await getJSON(api + qs({ ...base, ...extra }))).query || {};
+    const pages = async extra => (await raw(extra)).pages || [];
     const single = !/\s/.test(term);
+    // a single word means the WORD (or name), never "Name Surname" articles of people whose surname happens to contain it
+    const fits = p => usable(p) && !isDisambig(p) && !!p.extract && (!single || tokenCount(p.title) === 1);
+    const orderIn = (list, titles) => {
+        const idx = new Map(titles.map((x, i) => [x.toLowerCase(), i]));
+        return [...list].sort((a, b) => (idx.get(String(a.title).toLowerCase()) ?? 99) - (idx.get(String(b.title).toLowerCase()) ?? 99));
+    };
 
-    // 1) a given name: the article about the name itself, not the most famous person with it
+    // 1) the article about the NAME ("Эдвард (имя)"), also for inflected forms ("Эдварда")
     const sfx = NAME_SUFFIX[lang];
     if (nameFirst && single && sfx) {
-        const hit = (await pages({ titles: sfx.map(x => `${cap(term)} ${x}`).join('|') })).filter(usable).sort(byIndex).find(p => !isDisambig(p) && p.extract);
+        const titles = nameForms(term).flatMap(f => sfx.map(x => `${cap(f)} ${x}`));
+        const hit = orderIn((await pages({ titles: titles.join('|') })).filter(p => usable(p) && !isDisambig(p) && p.extract), titles)[0];
         if (hit) return mkPage(hit, lang, true, { kind: 'name' });
-        const found = await pages({ generator: 'search', gsrsearch: `${term} ${sfx[0].replace(/[()]/g, '')}`, gsrlimit: 6 });
-        const nm = found.filter(usable).sort(byIndex).find(p => p.extract && !isDisambig(p) && sfx.some(x => p.title.toLowerCase().endsWith(x.toLowerCase())) && titleMatches(term, p.title.replace(/\s*\(.*\)\s*$/, '')));
+        const found = await pages({ generator: 'search', gsrsearch: `${term} ${sfx[0].replace(/[()]/g, '')}`, gsrlimit: 20 });
+        const nm = found.filter(usable).sort(byIndex).find(p => p.extract && !isDisambig(p) && sfx.some(x => p.title.toLowerCase().endsWith(x.toLowerCase())) && nameForms(term).some(f => titleMatches(f, baseTitle(p.title))));
         if (nm) return mkPage(nm, lang, true, { kind: 'name' });
     }
 
-    // 2) the exact title
-    const exact = (await pages({ titles: term }))[0];
+    // 2) the exact title, and for a single word its dictionary-form guesses
+    const cands = (single ? wordForms(term, lang) : [term]).map(cap);
+    const exactRes = await raw({ titles: cands.join('|') });
+    const got = (exactRes.pages || []).filter(usable);
+    // a redirect made by Wikipedia editors ("Шекспир" -> "Уильям Шекспир") is trusted even for a single word
+    const redirected = new Set((exactRes.redirects || []).map(r => String(r.to).toLowerCase()));
+    const okTitle = p => !single || tokenCount(p.title) === 1 || redirected.has(String(p.title).toLowerCase());
     let disambig = null;
-    if (usable(exact)) {
-        if (isDisambig(exact)) disambig = exact;
-        else { const p = await withExtract(exact, lang); if (p.extract) return mkPage(p, lang, true); }
+    const exactOk = orderIn(got.filter(p => !isDisambig(p) && p.extract && okTitle(p)), cands)[0];
+    disambig = orderIn(got.filter(p => isDisambig(p) && p.extract), cands)[0] || null;
+    if (exactOk) return mkPage(exactOk, lang, true);
+    if (!exactOk && got.some(p => !isDisambig(p) && !p.extract)) {
+        const p = await withExtract(got.find(x => !isDisambig(x) && !x.extract), lang);
+        if (p.extract && okTitle(p)) return mkPage(p, lang, true);
     }
 
-    // 3) full-text search
-    const found = (await pages({ generator: 'search', gsrsearch: term, gsrlimit: 6 })).filter(usable).sort(byIndex);
+    // 3) full-text search (best: titles equal to the word, then the rest)
+    const found = (await pages({ generator: 'search', gsrsearch: term, gsrlimit: 10 })).filter(usable).sort(byIndex);
     const list = found.filter(p => !isDisambig(p) && p.extract);
-    const good = list.find(p => titleMatches(term, p.title));
-    if (good) return mkPage(good, lang, true);
+    const matching = list.filter(p => fits(p) && titleMatches(term, p.title));
+    const exactish = matching.find(p => norm(baseTitle(p.title)).split(' ').length === norm(term).split(' ').length);
+    if (exactish || matching[0]) return mkPage(exactish || matching[0], lang, true);
 
-    // 4) the "meanings" page of the word itself
+    // 4) the "meanings" page of the word itself (also surname pages)
     if (disambig && disambig.extract) return mkPage(disambig, lang, true, { kind: 'disambig' });
 
-    // 5) prefix search (handles lowercase / partial titles that full-text search misses)
+    // 5) prefix search
     try {
-        const os = await getJSON(`https://${lang}.wikipedia.org/w/api.php?` + qs({ action: 'opensearch', search: term, limit: 6, namespace: 0, format: 'json', origin: '*' }));
-        const titles = (os[1] || []).filter(x => titleMatches(term, x));
+        const os = await getJSON(`https://${lang}.wikipedia.org/w/api.php?` + qs({ action: 'opensearch', search: term, limit: 8, namespace: 0, format: 'json', origin: '*' }));
+        const titles = (os[1] || []).filter(x => titleMatches(term, x) && (!single || tokenCount(x) === 1));
         if (titles.length) {
-            const got = (await pages({ titles: titles.join('|') })).filter(usable).sort(byIndex);
-            const g = got.find(p => !isDisambig(p) && p.extract) || got.find(p => p.extract);
+            const pg = (await pages({ titles: titles.join('|') })).filter(usable);
+            const g = orderIn(pg.filter(p => !isDisambig(p) && p.extract), titles)[0] || orderIn(pg.filter(p => p.extract), titles)[0];
             if (g) return mkPage(g, lang, true, isDisambig(g) ? { kind: 'disambig' } : {});
         }
     } catch (e) { /* ignore */ }
 
-    // 6) something loosely related (shown only in "Wikipedia only" mode)
-    return list[0] ? mkPage(list[0], lang, false) : null;
+    // 6) something loosely related, even a person (shown only in "Wikipedia only" mode)
+    const loose = list[0];
+    return loose ? mkPage(loose, lang, false) : null;
 }
 
 const MONTHS = {

@@ -197,7 +197,9 @@ function render() {
 /** Should the article about the NAME be preferred (a capitalised single word in the middle of a sentence)? */
 function wantsName(st) {
     const mode = S().wiki.names, single = !/\s/.test(st.term) && /^\p{Lu}/u.test(st.term) && st.term.length >= 3;
-    return mode === 'always' ? single : mode === 'smart' ? single && !!st.midCap : false;
+    if (mode === 'name') return single;                 // any capitalised word: a name article is tried first and used only if it exists
+    if (mode === 'mid') return single && !!st.midCap;   // only mid-sentence
+    return false;
 }
 
 async function load(src, my, opts = {}) {

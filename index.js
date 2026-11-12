@@ -25,7 +25,11 @@ function whenReady(selector, fn, tries = 80) {
 }
 
 function boot() {
-    safe('settings', () => fillDefaults(S(), DEFAULTS));
+    safe('settings', () => {
+        fillDefaults(S(), DEFAULTS);
+        const w = S().wiki;
+        if (w.names === 'smart' || w.names === 'always') w.names = 'name'; // values of 0.2.x
+    });
     whenReady('#extensions_settings2', initSettings);
     safe('ui', initUi);
     bus.addEventListener('enabled', () => { if (!S().enabled) closeCard(); });
